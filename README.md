@@ -6,6 +6,10 @@
 
 A semi-autonomous, full-stack trading terminal designed for the **National Stock Exchange (NSE) of India**. The system blends rule-based technical analysis with an artificial intelligence engine (Random Forest + NLP Sentiment Analysis) to provide actionable trading signals, automated background scanning, and real-time Telegram alerts.
 
+**Description:** AI trading terminal — Random Forest + NLP sentiment + Telegram alerts for NSE
+
+**Topics:** trading, nse, machine-learning, fastapi, python, india, fintech
+
 ---
 
 ## ✨ Key Features
