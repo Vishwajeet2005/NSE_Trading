@@ -34,18 +34,31 @@ TELEGRAM_CHAT_ID    = ""
 GROQ_API_KEY   = ""
 
 import os
-import keyring
+try:
+    import keyring
+except ImportError:
+    keyring = None
 
 SERVICE_NAME = "nse_trading_system"
 
+def get_secret(key: str) -> str:
+    val = os.getenv(key)
+    if val: return val
+    if keyring:
+        try:
+            return keyring.get_password(SERVICE_NAME, key) or ""
+        except Exception:
+            return ""
+    return ""
+
 def load_credentials() -> dict:
     return {
-        "ZERODHA_API_KEY": keyring.get_password(SERVICE_NAME, "ZERODHA_API_KEY") or "",
-        "ZERODHA_API_SECRET": keyring.get_password(SERVICE_NAME, "ZERODHA_API_SECRET") or "",
-        "ZERODHA_ACCESS_TOKEN": keyring.get_password(SERVICE_NAME, "ZERODHA_ACCESS_TOKEN") or "",
-        "TELEGRAM_BOT_TOKEN": keyring.get_password(SERVICE_NAME, "TELEGRAM_BOT_TOKEN") or "",
-        "TELEGRAM_CHAT_ID": keyring.get_password(SERVICE_NAME, "TELEGRAM_CHAT_ID") or "",
-        "GROQ_API_KEY": keyring.get_password(SERVICE_NAME, "GROQ_API_KEY") or "",
+        "ZERODHA_API_KEY": get_secret("ZERODHA_API_KEY"),
+        "ZERODHA_API_SECRET": get_secret("ZERODHA_API_SECRET"),
+        "ZERODHA_ACCESS_TOKEN": get_secret("ZERODHA_ACCESS_TOKEN"),
+        "TELEGRAM_BOT_TOKEN": get_secret("TELEGRAM_BOT_TOKEN"),
+        "TELEGRAM_CHAT_ID": get_secret("TELEGRAM_CHAT_ID"),
+        "GROQ_API_KEY": get_secret("GROQ_API_KEY"),
     }
 
 def save_credentials(creds: dict):
