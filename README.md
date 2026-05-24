@@ -1,6 +1,8 @@
 # 📈 NSE Trading System & AI Terminal
 
-![NSE Trading Dashboard](https://img.shields.io/badge/Status-Active-success) ![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![React](https://img.shields.io/badge/React-Vite-61DAFB) ![FastAPI](https://img.shields.io/badge/FastAPI-009688)
+![NSE Trading Dashboard](https://img.shields.io/badge/Status-Active-success) ![Python](https://img.shields.io/badge/Python-3.12%2B-blue) ![React](https://img.shields.io/badge/React-Vite-61DAFB) ![FastAPI](https://img.shields.io/badge/FastAPI-009688)
+
+🚀 **Live Demo:** [https://nse-trading-system-6117.onrender.com](https://nse-trading-system-6117.onrender.com)
 
 A semi-autonomous, full-stack trading terminal designed for the **National Stock Exchange (NSE) of India**. The system blends rule-based technical analysis with an artificial intelligence engine (Random Forest + NLP Sentiment Analysis) to provide actionable trading signals, automated background scanning, and real-time Telegram alerts.
 
