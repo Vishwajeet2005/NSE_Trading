@@ -9,7 +9,7 @@ services:
       - key: PYTHON_VERSION
         value: 3.10.0
       - key: NODE_VERSION
-        value: 22.11.0
+        value: 22.14.0
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID
