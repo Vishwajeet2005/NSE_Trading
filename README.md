@@ -1,6 +1,6 @@
 # 📈 NSE Trading System & AI Terminal
 
-![NSE Trading Dashboard](https://img.shields.io/badge/Status-Active-success) ![Python](https://img.shields.io/badge/Python-3.12%2B-blue) ![React](https://img.shields.io/badge/React-Vite-61DAFB) ![FastAPI](https://img.shields.io/badge/FastAPI-009688) ![Status](https://img.shields.io/badge/Status-Live-success) ![Deploy](https://img.shields.io/badge/Deployed-Render-46E3B7)
+![NSE Trading Dashboard](https://img.shields.io/badge/Status-Active-success) ![Python](https://img.shields.io/badge/Python-3.12%2B-blue) ![React](https://img.shields.io/badge/React-Vite-61DAFB) ![FastAPI](https://img.shields.io/badge/FastAPI-009688) ![Deploy](https://img.shields.io/badge/Deployed-Render-46E3B7)
 
 🚀 **Live Demo:** [https://nse-trading-system-6117.onrender.com](https://nse-trading-system-6117.onrender.com)
 
