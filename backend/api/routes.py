@@ -1,37 +1,47 @@
 """
-api.py — FastAPI backend — ENHANCED with all-stock endpoints
+api.py — FastAPI backend — Refactored for Security & Stability
 """
 from __future__ import annotations
 
 import json
+import os
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-import os
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+import yfinance as yf
 
 from backend.core import database as db
 from backend.engine.data import fetch_live_quote, fetch_historical
 from backend.execution.bridge import ExecutionBridge
 from backend.core.notification import NotificationService
-from backend.engine.risk import Assessment
-from backend.core.settings import NSE_WATCHLIST, load_credentials, save_credentials, refresh_credentials, GROQ
-import requests
+from backend.core.settings import NSE_WATCHLIST, load_credentials, save_credentials, refresh_credentials
 from backend.engine.strategy import Signal, SignalGenerator
 from backend.core import logger as log_mod
+from backend.ml.predict import generate_prediction
 
 log = log_mod.get(__name__)
 
 app = FastAPI(title="NSE Trading System API")
+
+# SECURITY FIX: Restrict CORS to specific origins in production, allow localhost for dev.
+ALLOWED_ORIGINS = [
+    "http://localhost:5173", 
+    "http://localhost:8000",
+    "https://nse-trading-system-6117.onrender.com"
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST"], # Block PUT/DELETE if unused
     allow_headers=["*"],
 )
 
@@ -40,8 +50,34 @@ bridge = ExecutionBridge()
 notifier = NotificationService(console_output=False)
 _gen = SignalGenerator()
 
+# SECURITY FIX: Implement basic API Key protection for sensitive routes
+API_KEY_NAME = "X-API-KEY"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
-def _rebuild_assessment(row: dict) -> Assessment:
+def verify_api_key(api_key_header: str = Security(api_key_header)):
+    # In a real app, store this in an env var. We use a fallback for local dev.
+    expected_key = os.getenv("APP_ADMIN_KEY", "dev-secret-key")
+    if api_key_header != expected_key:
+        raise HTTPException(status_code=403, detail="Could not validate credentials")
+    return api_key_header
+
+def validate_ticker(ticker: str) -> str:
+    """SECURITY FIX: Prevent injection by strictly validating ticker format."""
+    ticker = ticker.upper()
+    if not re.match(r"^[A-Z0-9\-\=]+$", ticker):
+        raise HTTPException(status_code=400, detail="Invalid ticker format")
+    return ticker
+
+def _rebuild_assessment(row: dict) -> Any:
+    # BUG FIX: Safely handle null/empty signal_reasons from the database
+    raw_reasons = row.get("signal_reasons")
+    reasons = []
+    if raw_reasons:
+        try:
+            reasons = json.loads(raw_reasons)
+        except json.JSONDecodeError:
+            log.warning(f"Failed to parse signal reasons for ID {row.get('id')}")
+            
     sig = Signal(
         ticker      = row["ticker"],
         timestamp   = row["created_at"] if isinstance(row["created_at"], datetime)
@@ -51,10 +87,11 @@ def _rebuild_assessment(row: dict) -> Assessment:
         current_rsi = 50.0,
         current_atr = 0.0,
         confidence  = row["confidence_score"],
-        reasons     = json.loads(row.get("signal_reasons", "[]")),
+        reasons     = reasons,
     )
     risk_per_share = abs(row["entry_price"] - row["stop_loss"])
     shares = row["position_size"]
+    from backend.engine.risk import Assessment
     return Assessment(
         signal=sig, approved=True,
         stop_loss=row["stop_loss"],
@@ -67,8 +104,7 @@ def _rebuild_assessment(row: dict) -> Assessment:
         equity=0.0,
     )
 
-
-# ── Existing endpoints ────────────────────────────────────────────────────────
+# ── Read-Only Endpoints (Public) ──────────────────────────────────────────────
 
 @app.get("/api/signals/pending")
 def get_pending_signals() -> List[Dict[str, Any]]:
@@ -95,12 +131,9 @@ def get_live_quotes() -> Dict[str, Any]:
             quotes[ticker] = q
     return quotes
 
-# ── NEW: Any-stock endpoints ───────────────────────────────────────────────────
-
 @app.get("/api/stock/{ticker}/quote")
 def get_stock_quote(ticker: str) -> Dict[str, Any]:
-    """Get live quote for ANY NSE ticker."""
-    ticker = ticker.upper()
+    ticker = validate_ticker(ticker)
     q = fetch_live_quote(ticker)
     if not q:
         raise HTTPException(status_code=404, detail=f"Could not fetch data for {ticker}")
@@ -109,8 +142,7 @@ def get_stock_quote(ticker: str) -> Dict[str, Any]:
 
 @app.get("/api/stock/{ticker}/history")
 def get_stock_history(ticker: str, period: str = "6mo") -> Dict[str, Any]:
-    """Get OHLCV history for ANY NSE ticker. Returns chart-ready data."""
-    ticker = ticker.upper()
+    ticker = validate_ticker(ticker)
     try:
         df = fetch_historical(ticker, period=period, interval="1d")
         rows = []
@@ -121,7 +153,7 @@ def get_stock_history(ticker: str, period: str = "6mo") -> Dict[str, Any]:
                 "high":   round(float(row["High"]), 2),
                 "low":    round(float(row["Low"]), 2),
                 "close":  round(float(row["Close"]), 2),
-                "volume": int(row["Volume"]),
+                "volume": int(row["Volume"]) if not pd.isna(row["Volume"]) else 0,
             })
         return {"ticker": ticker, "period": period, "candles": rows}
     except Exception as e:
@@ -129,8 +161,7 @@ def get_stock_history(ticker: str, period: str = "6mo") -> Dict[str, Any]:
 
 @app.get("/api/stock/{ticker}/analysis")
 def get_stock_analysis(ticker: str) -> Dict[str, Any]:
-    """Run strategy engine analysis on any NSE ticker."""
-    ticker = ticker.upper()
+    ticker = validate_ticker(ticker)
     try:
         df = fetch_historical(ticker, period="6mo", interval="1d")
         sig = _gen.analyse(ticker, df)
@@ -147,45 +178,9 @@ def get_stock_analysis(ticker: str) -> Dict[str, Any]:
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/stock/{ticker}/news")
-def get_stock_news(ticker: str) -> List[Dict[str, Any]]:
-    """Fetch recent news for a specific ticker."""
-    yf_sym = ticker if ("-" in ticker or "=" in ticker) else f"{ticker.upper()}.NS"
-    try:
-        news_data = yf.Ticker(yf_sym).news
-        parsed_news = []
-        for n in news_data:
-            if isinstance(n, dict):
-                content = n.get("content", n)
-                title = content.get("title", "")
-                
-                provider = content.get("provider", {})
-                publisher = provider.get("displayName", "Unknown") if isinstance(provider, dict) else "Unknown"
-                
-                link_obj = content.get("clickThroughUrl", content.get("link", {}))
-                link = link_obj.get("url", "") if isinstance(link_obj, dict) else (link_obj if isinstance(link_obj, str) else "")
-                
-                # Try to get providerPublishTime (unix), fallback to pubDate string
-                time_val = content.get("providerPublishTime", 0)
-                if not time_val and "pubDate" in content:
-                    time_val = content["pubDate"]
-                    
-                parsed_news.append({
-                    "title": title,
-                    "publisher": publisher,
-                    "link": link,
-                    "time": time_val
-                })
-        return parsed_news
-    except Exception as e:
-        log.error(f"Failed to fetch news for {yf_sym}: {e}")
-        return []
-
 @app.get("/api/market/overview")
 def get_market_overview() -> Dict[str, Any]:
-    """Summary stats across the watchlist."""
     quotes = {}
-    buys = sells = neutral = 0
     for ticker in NSE_WATCHLIST:
         q = fetch_live_quote(ticker)
         if q:
@@ -202,70 +197,44 @@ def get_market_overview() -> Dict[str, Any]:
         "quotes":       quotes,
     }
 
-class DenyRequest(BaseModel):
-    note: str = ""
-
-@app.post("/api/signals/{signal_id}/approve")
-def approve_signal(signal_id: int):
-    signals = db.pending_signals()
-    sig = next((s for s in signals if s["id"] == signal_id), None)
-    if not sig:
-        raise HTTPException(status_code=404, detail="Signal not found")
-    assessment = _rebuild_assessment(sig)
-    result = bridge.execute(signal_id, assessment)
-    if result.success:
-        notifier.notify_execution(sig["ticker"], sig["direction"], sig["position_size"],
-                                  sig["entry_price"], result.order_id, signal_id)
-        return {"success": True, "order_id": result.order_id}
-    raise HTTPException(status_code=400, detail=result.error)
-
-@app.post("/api/signals/{signal_id}/deny")
-def deny_signal(signal_id: int, req: DenyRequest):
-    signals = db.pending_signals()
-    sig = next((s for s in signals if s["id"] == signal_id), None)
-    if not sig:
-        raise HTTPException(status_code=404, detail="Signal not found")
-    bridge.deny(signal_id, sig["ticker"], req.note)
-    notifier.notify_denial(signal_id, sig["ticker"], req.note)
-    return {"success": True}
+@app.get("/api/stock/{ticker}/news")
+def get_stock_news(ticker: str) -> List[Dict[str, Any]]:
+    ticker = validate_ticker(ticker)
+    yf_sym = ticker if ("-" in ticker or "=" in ticker) else f"{ticker}.NS"
+    try:
+        news_data = yf.Ticker(yf_sym).news
+        parsed_news = []
+        for n in news_data:
+            if isinstance(n, dict):
+                content = n.get("content")
+                if not isinstance(content, dict):
+                    content = n 
+                
+                title = content.get("title", "") if isinstance(content, dict) else ""
+                
+                provider = content.get("provider", {}) if isinstance(content, dict) else {}
+                publisher = provider.get("displayName", "Unknown") if isinstance(provider, dict) else "Unknown"
+                
+                if title:
+                    parsed_news.append({
+                        "title": title,
+                        "publisher": publisher,
+                        "link": content.get("clickThroughUrl", "") if isinstance(content, dict) else "",
+                        "time": content.get("providerPublishTime", 0) if isinstance(content, dict) else 0
+                    })
+        return parsed_news
+    except Exception as e:
+        log.error(f"Failed to fetch news for {yf_sym}: {e}")
+        return []
 
 @app.get("/api/credentials")
 def get_credentials() -> Dict[str, Any]:
     creds = load_credentials()
-    # Return masked credentials or just presence flags to avoid exposing secrets
     return {
         "zerodha_configured": bool(creds.get("ZERODHA_API_KEY") and creds.get("ZERODHA_ACCESS_TOKEN")),
         "telegram_configured": bool(creds.get("TELEGRAM_BOT_TOKEN") and creds.get("TELEGRAM_CHAT_ID")),
         "groq_configured": bool(creds.get("GROQ_API_KEY"))
     }
-
-class CredentialsRequest(BaseModel):
-    ZERODHA_API_KEY: str = ""
-    ZERODHA_API_SECRET: str = ""
-    ZERODHA_ACCESS_TOKEN: str = ""
-    TELEGRAM_BOT_TOKEN: str = ""
-    TELEGRAM_CHAT_ID: str = ""
-    GROQ_API_KEY: str = ""
-
-@app.post("/api/credentials")
-def update_credentials(req: CredentialsRequest):
-    # Only update provided fields (non-empty) or overwrite all?
-    # Usually we want to overwrite with what's provided. If a field is empty, maybe keep existing?
-    # We will merge it.
-    creds = load_credentials()
-    if req.ZERODHA_API_KEY: creds["ZERODHA_API_KEY"] = req.ZERODHA_API_KEY
-    if req.ZERODHA_API_SECRET: creds["ZERODHA_API_SECRET"] = req.ZERODHA_API_SECRET
-    if req.ZERODHA_ACCESS_TOKEN: creds["ZERODHA_ACCESS_TOKEN"] = req.ZERODHA_ACCESS_TOKEN
-    if req.TELEGRAM_BOT_TOKEN: creds["TELEGRAM_BOT_TOKEN"] = req.TELEGRAM_BOT_TOKEN
-    if req.TELEGRAM_CHAT_ID: creds["TELEGRAM_CHAT_ID"] = req.TELEGRAM_CHAT_ID
-    if req.GROQ_API_KEY: creds["GROQ_API_KEY"] = req.GROQ_API_KEY
-    
-    save_credentials(creds)
-    refresh_credentials()
-    return {"success": True}
-
-import yfinance as yf
-from backend.ml.predict import generate_prediction
 
 @app.post("/api/ml/predict")
 def ml_predict(body: Dict[str, Any]):
@@ -279,7 +248,7 @@ def ml_predict(body: Dict[str, Any]):
                 for n in news_data:
                     if isinstance(n, dict):
                         content = n.get("content", n)
-                        title = content.get("title", "")
+                        title = content.get("title", "") if isinstance(content, dict) else ""
                         if title:
                             news_titles.append(title)
                 body["news"] = news_titles[:5]
@@ -292,6 +261,53 @@ def ml_predict(body: Dict[str, Any]):
     except Exception as e:
         log.error("ML Prediction failed: %s", str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+# ── Protected Endpoints (Requires API Key) ────────────────────────────────────
+
+class DenyRequest(BaseModel):
+    note: str = ""
+
+@app.post("/api/signals/{signal_id}/approve", dependencies=[Depends(verify_api_key)])
+def approve_signal(signal_id: int):
+    signals = db.pending_signals()
+    sig = next((s for s in signals if s["id"] == signal_id), None)
+    if not sig:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    assessment = _rebuild_assessment(sig)
+    result = bridge.execute(signal_id, assessment)
+    if result.success:
+        notifier.notify_execution(sig["ticker"], sig["direction"], sig["position_size"],
+                                  sig["entry_price"], result.order_id, signal_id)
+        return {"success": True, "order_id": result.order_id}
+    raise HTTPException(status_code=400, detail=result.error)
+
+@app.post("/api/signals/{signal_id}/deny", dependencies=[Depends(verify_api_key)])
+def deny_signal(signal_id: int, req: DenyRequest):
+    signals = db.pending_signals()
+    sig = next((s for s in signals if s["id"] == signal_id), None)
+    if not sig:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    bridge.deny(signal_id, sig["ticker"], req.note)
+    notifier.notify_denial(signal_id, sig["ticker"], req.note)
+    return {"success": True}
+
+class CredentialsRequest(BaseModel):
+    ZERODHA_API_KEY: str = ""
+    ZERODHA_API_SECRET: str = ""
+    ZERODHA_ACCESS_TOKEN: str = ""
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID: str = ""
+    GROQ_API_KEY: str = ""
+
+@app.post("/api/credentials", dependencies=[Depends(verify_api_key)])
+def update_credentials(req: CredentialsRequest):
+    creds = load_credentials()
+    for field, value in req.dict().items():
+        if value: 
+            creds[field] = value
+    save_credentials(creds)
+    refresh_credentials()
+    return {"success": True}
 
 # ==============================================================================
 # STATIC FRONTEND SERVING (For Production/Render)
@@ -309,6 +325,3 @@ if os.path.exists(frontend_dist):
             if os.path.exists(index_path):
                 return FileResponse(index_path)
         raise HTTPException(status_code=404, detail="Not Found")
-
-
-
