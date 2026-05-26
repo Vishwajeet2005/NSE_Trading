@@ -54,6 +54,7 @@ import {
 
 // ═══════════════════════════════════════════════════════════════════
 const BACKEND = import.meta.env.DEV ? "http://localhost:8000" : "";
+const API_KEY = localStorage.getItem("NSE_API_KEY") || "dev-secret-key";
 
 async function tryFetch(url, options = {}) {
   try {
@@ -1559,15 +1560,13 @@ export default function NSETradingTerminal() {
 
 
   const handleSaveCredentials = async () => {
-
     await fetch(`${BACKEND}/api/credentials`, {
-
       method: "POST",
-
-      headers: { "Content-Type": "application/json" },
-
+      headers: { 
+        "Content-Type": "application/json",
+        "X-API-KEY": API_KEY 
+      },
       body: JSON.stringify(credentials)
-
     });
 
     await fetchCredentials();
@@ -1594,14 +1593,20 @@ export default function NSETradingTerminal() {
 
 
 
+  const abortControllerRef = useRef(null);
+
   const loadStockData = useCallback(async (stock) => {
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
 
     if (stockData[stock.s]) return;
     let candles;
     const [backendData, newsData] = await Promise.all([
-      tryFetch(`${BACKEND}/api/stock/${stock.s}/history`),
-      tryFetch(`${BACKEND}/api/stock/${stock.s}/news`),
+      tryFetch(`${BACKEND}/api/stock/${stock.s}/history`, { signal }),
+      tryFetch(`${BACKEND}/api/stock/${stock.s}/news`, { signal }),
     ]);
+    if (signal.aborted) return;
     if (backendData?.candles) {
       candles = backendData.candles.map(c => ({ ...c, close: c.close }));
     } else {
@@ -1716,27 +1721,23 @@ export default function NSETradingTerminal() {
 
 
   const approveSignal = async (id) => {
-
-    const r = await tryFetch(`${BACKEND}/api/signals/${id}/approve`, { method: "POST" });
-
+    const r = await tryFetch(`${BACKEND}/api/signals/${id}/approve`, { 
+      method: "POST",
+      headers: { "X-API-KEY": API_KEY }
+    });
     if (r?.success) fetchSignals();
-
   };
 
-
-
   const denySignal = async (id, ticker) => {
-
     await tryFetch(`${BACKEND}/api/signals/${id}/deny`, {
-
-      method: "POST", headers: { "Content-Type": "application/json" },
-
+      method: "POST", 
+      headers: { 
+        "Content-Type": "application/json",
+        "X-API-KEY": API_KEY 
+      },
       body: JSON.stringify({ note: "Denied from terminal" }),
-
     });
-
     fetchSignals();
-
   };
 
 
