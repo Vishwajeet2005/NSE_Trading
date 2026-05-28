@@ -157,7 +157,8 @@ def get_stock_history(ticker: str, period: str = "6mo") -> Dict[str, Any]:
             })
         return {"ticker": ticker, "period": period, "candles": rows}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        log.error("Error fetching historical data: %s", str(e))
+        raise HTTPException(status_code=500, detail="An internal server error occurred.")
 
 @app.get("/api/stock/{ticker}/analysis")
 def get_stock_analysis(ticker: str) -> Dict[str, Any]:
@@ -176,7 +177,8 @@ def get_stock_analysis(ticker: str) -> Dict[str, Any]:
             "indicators":  sig.indicators,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        log.error("Error running stock analysis: %s", str(e))
+        raise HTTPException(status_code=500, detail="An internal server error occurred.")
 
 @app.get("/api/market/overview")
 def get_market_overview() -> Dict[str, Any]:
@@ -260,7 +262,7 @@ def ml_predict(body: Dict[str, Any]):
         return prediction
     except Exception as e:
         log.error("ML Prediction failed: %s", str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal server error occurred.")
 
 # ── Protected Endpoints (Requires API Key) ────────────────────────────────────
 

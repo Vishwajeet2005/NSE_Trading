@@ -19,37 +19,13 @@ from typing import Final
 #  ▶  SECTION 1 — CREDENTIALS  (edit these directly)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# ── Zerodha Kite Connect ──────────────────────────────────────────────────────
-# Credentials are now managed dynamically via the UI and stored in .credentials.json.
-# (You can still set fallback values here if needed)
-ZERODHA_API_KEY     = ""
-ZERODHA_API_SECRET  = ""
-ZERODHA_ACCESS_TOKEN = ""
-
-# ── Telegram Bot ──────────────────────────────────────────────────────────────
-TELEGRAM_BOT_TOKEN  = ""
-TELEGRAM_CHAT_ID    = ""
-
-# ── Groq AI ───────────────────────────────────────────────────────────────────
-GROQ_API_KEY   = ""
+# ── API Credentials ──────────────────────────────────────────────────────────
+# All secrets must be loaded from Environment Variables. Do not hardcode them.
 
 import os
-try:
-    import keyring
-except ImportError:
-    keyring = None
-
-SERVICE_NAME = "nse_trading_system"
 
 def get_secret(key: str) -> str:
-    val = os.getenv(key)
-    if val: return val
-    if keyring:
-        try:
-            return keyring.get_password(SERVICE_NAME, key) or ""
-        except Exception:
-            return ""
-    return ""
+    return os.getenv(key) or ""
 
 def load_credentials() -> dict:
     return {
@@ -62,14 +38,9 @@ def load_credentials() -> dict:
     }
 
 def save_credentials(creds: dict):
-    for k, v in creds.items():
-        if v:
-            keyring.set_password(SERVICE_NAME, k, v)
-        else:
-            try:
-                keyring.delete_password(SERVICE_NAME, k)
-            except keyring.errors.PasswordDeleteError:
-                pass
+    # Pass-through for legacy UI settings. In a production 12-factor app, 
+    # credentials should be managed exclusively via the deployment environment dashboard.
+    pass
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  ▶  SECTION 2 — NSE WATCHLIST  (edit to your preferred stocks)
@@ -199,20 +170,20 @@ class SystemConfig:
 
 @dataclass
 class ZerodhaConfig:
-    api_key:      str  = ZERODHA_API_KEY
-    api_secret:   str  = ZERODHA_API_SECRET
-    access_token: str  = ZERODHA_ACCESS_TOKEN
-    enabled:      bool = bool(ZERODHA_API_KEY and ZERODHA_ACCESS_TOKEN)
+    api_key:      str  = ""
+    api_secret:   str  = ""
+    access_token: str  = ""
+    enabled:      bool = False
 
 @dataclass
 class TelegramConfig:
-    bot_token: str  = TELEGRAM_BOT_TOKEN
-    chat_id:   str  = TELEGRAM_CHAT_ID
-    enabled:   bool = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+    bot_token: str  = ""
+    chat_id:   str  = ""
+    enabled:   bool = False
 
 @dataclass
 class GroqConfig:
-    api_key: str = GROQ_API_KEY
+    api_key: str = ""
 
 # Singleton instances imported throughout the codebase
 ZERODHA  = ZerodhaConfig()
@@ -225,16 +196,16 @@ SYSTEM   = SystemConfig()
 
 def refresh_credentials():
     creds = load_credentials()
-    ZERODHA.api_key = creds.get("ZERODHA_API_KEY", ZERODHA_API_KEY)
-    ZERODHA.api_secret = creds.get("ZERODHA_API_SECRET", ZERODHA_API_SECRET)
-    ZERODHA.access_token = creds.get("ZERODHA_ACCESS_TOKEN", ZERODHA_ACCESS_TOKEN)
+    ZERODHA.api_key = creds.get("ZERODHA_API_KEY", "")
+    ZERODHA.api_secret = creds.get("ZERODHA_API_SECRET", "")
+    ZERODHA.access_token = creds.get("ZERODHA_ACCESS_TOKEN", "")
     ZERODHA.enabled = bool(ZERODHA.api_key and ZERODHA.access_token)
     
-    TELEGRAM.bot_token = creds.get("TELEGRAM_BOT_TOKEN", TELEGRAM_BOT_TOKEN)
-    TELEGRAM.chat_id = creds.get("TELEGRAM_CHAT_ID", TELEGRAM_CHAT_ID)
+    TELEGRAM.bot_token = creds.get("TELEGRAM_BOT_TOKEN", "")
+    TELEGRAM.chat_id = creds.get("TELEGRAM_CHAT_ID", "")
     TELEGRAM.enabled = bool(TELEGRAM.bot_token and TELEGRAM.chat_id)
     
-    GROQ.api_key = creds.get("GROQ_API_KEY", GROQ_API_KEY)
+    GROQ.api_key = creds.get("GROQ_API_KEY", "")
 
 # Load at startup
 refresh_credentials()
